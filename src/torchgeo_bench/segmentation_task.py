@@ -15,6 +15,7 @@ from torchmetrics.classification import (
 )
 from tqdm.auto import tqdm
 
+from .boundary_iou import MulticlassBoundaryIoU
 from .config.schema import SegmentationConfig
 from .segmentation_probe import (
     CachedFeaturesDataset,
@@ -103,12 +104,16 @@ class SegmentationSolver:
             ignore_index=self.ignore_index,
             average="macro",
         )
+        self.metric_boundary_iou = MulticlassBoundaryIoU(
+            num_classes=self.num_classes, ignore_index=self.ignore_index
+        )
         self._all_metrics = [
             self.metric,
             self.metric_fw_iou,
             self.metric_precision,
             self.metric_recall,
             self.metric_f1,
+            self.metric_boundary_iou,
         ]
 
         self.use_amp = device.startswith("cuda") and torch.cuda.is_available()
@@ -419,13 +424,15 @@ class SegmentationSolver:
         return counts.reshape(len(masks), self.num_classes, self.num_classes)
 
     def _compute_metrics(self) -> "SegMetrics":
-        """Compute and return all metrics as a dict."""
+        """Compute and return all segmentation metrics."""
         return {
             "mIoU": self.metric.compute().item(),
             "fw_IoU": self.metric_fw_iou.compute().item(),
             "precision": self.metric_precision.compute().item(),
             "recall": self.metric_recall.compute().item(),
             "f1": self.metric_f1.compute().item(),
+            "boundary_IoU": self.metric_boundary_iou.compute().item(),
+            "boundary_IoU_width": float(self.metric_boundary_iou.boundary_width),
         }
 
     def _evaluation_batches(

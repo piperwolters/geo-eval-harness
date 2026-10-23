@@ -53,6 +53,7 @@ _REGISTRY_SPEC: dict[str, tuple[str, str, Literal["classification", "segmentatio
     "aid": ("aid", "AID", "classification"),
     # other segmentation
     "hotosm_buildings": ("hotosm_buildings", "HOTOSMBuildings", "segmentation"),
+    "planteur": ("planteur", "PLANTEUR", "segmentation"),
 }
 
 
@@ -99,7 +100,15 @@ def download_command(name: str) -> str:
     """Return the command that downloads one registered dataset."""
     if name.startswith("m-"):
         return f"torchgeo-bench download geobench_v1 --datasets {name}"
-    if name in {"eurosat", "eurosat-spatial", "resisc45", "ucmerced", "aid", "hotosm_buildings"}:
+    if name in {
+        "eurosat",
+        "eurosat-spatial",
+        "resisc45",
+        "ucmerced",
+        "aid",
+        "hotosm_buildings",
+        "planteur",
+    }:
         return f"torchgeo-bench download {name.removesuffix('-spatial')}"
     return f"torchgeo-bench download geobench_v2 --datasets {name}"
 
@@ -207,7 +216,7 @@ def get_datasets(  # noqa: PLR0913 - public dataset loading options.
         bands: ``"rgb"`` (use the dataset's ``rgb_bands``), ``"all"`` /
             ``None`` (load all bands), or an explicit iterable of band names.
         time_steps: Number of acquisition dates per sample.  Only accepted by
-            multi-temporal wrappers (PASTIS); ``None`` keeps each dataset's
+            multi-temporal wrappers (PASTIS, PLANTEUR); ``None`` keeps each dataset's
             own default.
 
     Returns:

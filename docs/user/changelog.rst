@@ -26,6 +26,7 @@ Added
   OpenStreetMap building masks, on the official 57,890 / 7,237 / 7,236 split.
   ``torchgeo-bench download hotosm_buildings`` converts the upstream parquet
   into compact per-split files held in RAM.
+* PLANTEUR crop-type segmentation (``planteur``) from Hugging Face ``allenai/planteur-benchmark``: 2,750 Sentinel-2 + Sentinel-1 monthly time series over France's overseas territories, 8 classes, on the official 1,896 / 411 / 443 split. ``torchgeo-bench download planteur`` stacks the pinned release into memory-mapped per-split arrays.
 
 Fixed
 ^^^^^

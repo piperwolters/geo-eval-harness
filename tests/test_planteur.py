@@ -11,10 +11,11 @@ import pytest
 import torch
 
 from torchgeo_bench import download, hub
-from torchgeo_bench.datasets.planteur import PLANTEUR, convert_planteur
+from torchgeo_bench.datasets.planteur import PLANTEUR, PLANTEURLOIOMayotte, convert_planteur
 
 SPLIT_IDS = {"train": [3, 0], "val": [1], "test": [2]}
 SIZES = {split: len(ids) for split, ids in SPLIT_IDS.items()}
+LOIO_IDS = {"train": [2, 0], "val": [1], "test": [3]}
 # Patch 2 stores linear VV 0.2 and VH 1.2, which the conversion turns into dB.
 DB_0_2, DB_1_2 = 10 * np.log10(0.2), 10 * np.log10(1.2)
 
@@ -48,6 +49,7 @@ def _write_upstream(root: Path) -> None:
             }
         )
     (root / "splits" / "443.json").write_text(json.dumps({"splits": SPLIT_IDS}))
+    (root / "splits" / "loio.json").write_text(json.dumps({"folds": {"Mayotte": LOIO_IDS}}))
     (root / "metadata.geojson").write_text(json.dumps({"features": features}))
 
 
@@ -115,6 +117,16 @@ def test_time_steps_select_evenly_spaced_months(converted: Path) -> None:
     torch.testing.assert_close(sample["image"][:, 0, 0, 0], torch.tensor([1001.0, 1041.0, 1081.0]))
     with pytest.raises(ValueError, match="between 1 and 12"):
         PLANTEUR().get_dataset("val", time_steps=13)
+
+
+def test_loio_fold_reads_patches_across_default_splits_in_list_order(converted: Path) -> None:
+    del converted
+    bench = PLANTEURLOIOMayotte()
+    assert bench.data_root() == PLANTEUR.data_root()
+    for split, ids in LOIO_IDS.items():
+        dataset = bench.get_dataset(split, bands=("b02",))
+        assert [int(dataset[i]["image"][0, 0, 0]) for i in range(len(dataset))] == ids
+        assert [int(dataset[i]["mask"][0, 0]) for i in range(len(dataset))] == ids
 
 
 def test_pickled_split_reopens_its_arrays(converted: Path) -> None:

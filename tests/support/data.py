@@ -28,8 +28,10 @@ def require_dataset_data(name: str) -> None:
         ]
     elif name in ("eurosat", "eurosat-spatial"):
         paths = [Path("data/eurosat")]
-    elif name in ("resisc45", "ucmerced", "hotosm_buildings", "planteur"):
+    elif name in ("resisc45", "ucmerced", "hotosm_buildings"):
         paths = [Path("data") / name]
+    elif name.startswith("planteur"):
+        paths = [Path("data/planteur")]
     else:
         paths = [Path("data/geobenchv2") / name]
     if not any(path.exists() for path in paths):

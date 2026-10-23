@@ -54,6 +54,11 @@ _REGISTRY_SPEC: dict[str, tuple[str, str, Literal["classification", "segmentatio
     # other segmentation
     "hotosm_buildings": ("hotosm_buildings", "HOTOSMBuildings", "segmentation"),
     "planteur": ("planteur", "PLANTEUR", "segmentation"),
+    "planteur_loio_guadeloupe": ("planteur", "PLANTEURLOIOGuadeloupe", "segmentation"),
+    "planteur_loio_martinique": ("planteur", "PLANTEURLOIOMartinique", "segmentation"),
+    "planteur_loio_guyane": ("planteur", "PLANTEURLOIOGuyane", "segmentation"),
+    "planteur_loio_reunion": ("planteur", "PLANTEURLOIOReunion", "segmentation"),
+    "planteur_loio_mayotte": ("planteur", "PLANTEURLOIOMayotte", "segmentation"),
 }
 
 
@@ -100,6 +105,8 @@ def download_command(name: str) -> str:
     """Return the command that downloads one registered dataset."""
     if name.startswith("m-"):
         return f"torchgeo-bench download geobench_v1 --datasets {name}"
+    if name.startswith("planteur"):
+        return "torchgeo-bench download planteur"
     if name in {
         "eurosat",
         "eurosat-spatial",
@@ -107,7 +114,6 @@ def download_command(name: str) -> str:
         "ucmerced",
         "aid",
         "hotosm_buildings",
-        "planteur",
     }:
         return f"torchgeo-bench download {name.removesuffix('-spatial')}"
     return f"torchgeo-bench download geobench_v2 --datasets {name}"

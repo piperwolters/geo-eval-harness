@@ -3,6 +3,7 @@
 import csv
 import json
 import logging
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar, Self
@@ -48,11 +49,12 @@ def convert_planteur(upstream: Path, target: Path, *, expected_sizes: dict[str, 
     """Stack the release's per-patch monthly arrays into one memory-mappable file per split.
 
     Writes ``<split>_s2.npy``, ``<split>_s1.npy`` (backscatter in dB) and ``<split>_mask.npy`` plus
-    ``metadata.csv`` (patch id, split, island, centre lon/lat) under *target*.
+    ``metadata.csv`` (patch id, split, island, centre lon/lat) under *target*, and copies
+    the leave-one-island-out lists to ``loio.json``.
 
     Args:
         upstream: Hugging Face snapshot holding ``DATA_S2_MONTHLY``, ``DATA_S1_MONTHLY``,
-            ``ANNOTATIONS``, ``splits/443.json`` and ``metadata.geojson``.
+            ``ANNOTATIONS``, ``splits/443.json``, ``splits/loio.json`` and ``metadata.geojson``.
         target: Output directory.
         expected_sizes: Required number of patches per split.
 
@@ -104,6 +106,18 @@ def convert_planteur(upstream: Path, target: Path, *, expected_sizes: dict[str, 
         writer = csv.writer(stream, lineterminator="\n")
         writer.writerow(("id_patch", "split", "island", "lon", "lat"))
         writer.writerows(rows)
+    shutil.copyfile(upstream / "splits" / "loio.json", target / "loio.json")
+
+
+def _split_positions(root: Path) -> dict[int, tuple[str, int]]:
+    """Return ``{patch id: (default split, row)}`` for the converted arrays under *root*."""
+    positions: dict[int, tuple[str, int]] = {}
+    rows = dict.fromkeys(SPLITS, 0)
+    with (root / "metadata.csv").open(newline="") as stream:
+        for record in csv.DictReader(stream):
+            positions[int(record["id_patch"])] = (record["split"], rows[record["split"]])
+            rows[record["split"]] += 1
+    return positions
 
 
 class PLANTEUR(BenchDataset, Dataset):
@@ -115,7 +129,8 @@ class PLANTEUR(BenchDataset, Dataset):
     Identification System (RPG 2019). Classes: 0 Background, 1 Meadow,
     2 Fruits/vegetables/flowers, 3 Orchard, 4 Sugarcane, 5 Banana, 6 Pineapple,
     7 Tropical tuber; 255 is void (crops outside the taxonomy), which the segmentation
-    probe ignores. Uses the official spatial-block, territory-stratified split.
+    probe ignores. Uses the official spatial-block, territory-stratified split; the
+    ``planteur_loio_*`` subclasses hold out one territory each.
     Source: https://huggingface.co/datasets/allenai/planteur-benchmark (ODC-BY).
 
     Samples hold the month chosen by ``time_steps`` as in PASTIS: ``None`` or 1 returns
@@ -131,7 +146,8 @@ class PLANTEUR(BenchDataset, Dataset):
     split_sizes: ClassVar[dict[str, int]] = {"train": 1896, "val": 411, "test": 443}
     supports_partitions = False
 
-    # Ordered as stored: the S2 mosaic channels, then S1. Train-split statistics over all months.
+    # Ordered as stored: the S2 mosaic channels, then S1. Statistics over all months of the
+    # default train split, which every leave-one-island-out fold shares.
     # fmt: off
     bands: ClassVar[list[BandSpec]] = [
         BandSpec("s2", "b02", "B02", mean=1741.05, std=2596.19, min=0, max=19952, wavelength_um=0.49),
@@ -154,15 +170,15 @@ class PLANTEUR(BenchDataset, Dataset):
     def __init__(
         self,
         root: Path | None = None,
-        split: str = "train",
+        rows: list[tuple[str, int]] | None = None,
         *,
         band_indices: list[int] | None = None,
         months: list[int] | None = None,
         transform: Callable[[dict], dict] | None = None,
     ) -> None:
-        """Index one converted split under *root*, or no samples when it is ``None``."""
+        """Index *rows* (default split, row) of the converted arrays under *root*."""
         self.root = root
-        self.split = split
+        self.rows = [] if rows is None else rows
         self.months = [0] if months is None else months
         self.transform = transform
         band_indices = list(range(len(self.bands))) if band_indices is None else band_indices
@@ -178,44 +194,48 @@ class PLANTEUR(BenchDataset, Dataset):
             offset += shape[1]
         self._permutation = [read_order.index(i) for i in band_indices]
         self._arrays: dict[str, np.ndarray] = {}
-        self._length = 0
-        if root is not None:
-            self._length = int(np.load(root / f"{split}_mask.npy", mmap_mode="r").shape[0])
 
     def __getstate__(self) -> dict:
         """Drop open memory maps so workers reopen them instead of copying the split."""
         return {**self.__dict__, "_arrays": {}}
 
-    def _array(self, name: str) -> np.ndarray:
-        if name not in self._arrays:
+    def _array(self, split: str, name: str) -> np.ndarray:
+        key = f"{split}_{name}"
+        if key not in self._arrays:
             if self.root is None:
                 raise IndexError("PLANTEUR instance holds no split.")
-            self._arrays[name] = np.load(self.root / f"{self.split}_{name}.npy", mmap_mode="r")
-        return self._arrays[name]
+            self._arrays[key] = np.load(self.root / f"{key}.npy", mmap_mode="r")
+        return self._arrays[key]
 
     def __len__(self) -> int:
         """Return the number of loaded patches."""
-        return self._length
+        return len(self.rows)
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         """Return ``image`` (float32, raw values) and ``mask`` (int64 HW, 255 = void)."""
+        split, row = self.rows[index]
         stacks = [
             torch.from_numpy(
-                self._array(sensor)[index, self.months][:, channels].astype(np.float32)
+                self._array(split, sensor)[row, self.months][:, channels].astype(np.float32)
             )
             for sensor, channels in self._reads
         ]
         image = torch.cat(stacks, dim=1)[:, self._permutation]
         sample = {
             "image": image[0] if len(self.months) == 1 else image,
-            "mask": torch.from_numpy(self._array("mask")[index].astype(np.int64)),
+            "mask": torch.from_numpy(self._array(split, "mask")[row].astype(np.int64)),
         }
         return sample if self.transform is None else self.transform(sample)
 
     @classmethod
     def data_root(cls) -> Path:
-        """Return ``Path("data") / "planteur"``."""
-        return Path("data") / cls.name
+        """Return ``Path("data") / "planteur"``, shared by every fold."""
+        return Path("data") / "planteur"
+
+    def _split_rows(self, split: str) -> list[tuple[str, int]]:
+        """Return the converted-array rows of *split*."""
+        size = np.load(self.data_root() / f"{split}_mask.npy", mmap_mode="r").shape[0]
+        return [(split, row) for row in range(size)]
 
     def get_dataset(
         self,
@@ -243,5 +263,66 @@ class PLANTEUR(BenchDataset, Dataset):
         indices = [self.bands.index(spec) for spec in self.select_band_specs(bands)]
         months = [int(i * NUM_MONTHS / steps) for i in range(steps)]
         return type(self)(
-            self.data_root(), split, band_indices=indices, months=months, transform=transform
+            self.data_root(),
+            self._split_rows(split),
+            band_indices=indices,
+            months=months,
+            transform=transform,
         )
+
+
+class _PLANTEURLOIO(PLANTEUR):
+    """PLANTEUR leave-one-island-out fold: test is every patch of :attr:`held_out`.
+
+    Train and val split the other territories (about 88/12) and share 0.1° blocks, so val
+    scores are optimistic; test never shares a block with them. Saint-Martin stays in train.
+    """
+
+    held_out: ClassVar[str]
+
+    def _split_rows(self, split: str) -> list[tuple[str, int]]:
+        """Return the converted-array rows of this fold's *split*, in ``loio.json`` order."""
+        root = self.data_root()
+        ids = json.loads((root / "loio.json").read_text())["folds"][self.held_out][split]
+        positions = _split_positions(root)
+        return [positions[patch_id] for patch_id in ids]
+
+
+class PLANTEURLOIOGuadeloupe(_PLANTEURLOIO):
+    """PLANTEUR with Guadeloupe held out."""
+
+    name = "planteur_loio_guadeloupe"
+    held_out = "Guadeloupe"
+    split_sizes: ClassVar[dict[str, int]] = {"train": 1750, "val": 265, "test": 735}
+
+
+class PLANTEURLOIOMartinique(_PLANTEURLOIO):
+    """PLANTEUR with Martinique held out."""
+
+    name = "planteur_loio_martinique"
+    held_out = "Martinique"
+    split_sizes: ClassVar[dict[str, int]] = {"train": 1950, "val": 250, "test": 550}
+
+
+class PLANTEURLOIOGuyane(_PLANTEURLOIO):
+    """PLANTEUR with Guyane held out."""
+
+    name = "planteur_loio_guyane"
+    held_out = "Guyane"
+    split_sizes: ClassVar[dict[str, int]] = {"train": 1960, "val": 284, "test": 506}
+
+
+class PLANTEURLOIOReunion(_PLANTEURLOIO):
+    """PLANTEUR with Réunion held out."""
+
+    name = "planteur_loio_reunion"
+    held_out = "Réunion"
+    split_sizes: ClassVar[dict[str, int]] = {"train": 1720, "val": 217, "test": 813}
+
+
+class PLANTEURLOIOMayotte(_PLANTEURLOIO):
+    """PLANTEUR with Mayotte held out."""
+
+    name = "planteur_loio_mayotte"
+    held_out = "Mayotte"
+    split_sizes: ClassVar[dict[str, int]] = {"train": 2296, "val": 314, "test": 140}

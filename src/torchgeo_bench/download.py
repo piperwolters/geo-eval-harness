@@ -52,6 +52,7 @@ PLANTEUR_FILES = [
     "DATA_S1_MONTHLY/*",
     "ANNOTATIONS/*",
     "splits/443.json",
+    "splits/loio.json",
     "metadata.geojson",
 ]
 

@@ -70,7 +70,14 @@ NO_GEO: dict[str, str] = {
 }
 
 # Re-splits reuse coordinates from the dataset with the same imagery.
-GEO_ALIAS: dict[str, str] = {"eurosat-spatial": "m-eurosat", "eurosat": "m-eurosat"}
+GEO_ALIAS: dict[str, str] = {
+    "eurosat-spatial": "m-eurosat",
+    "eurosat": "m-eurosat",
+    **{
+        f"planteur_loio_{fold}": "planteur"
+        for fold in ("guadeloupe", "martinique", "guyane", "reunion", "mayotte")
+    },
+}
 
 BIN_RES = 0.25  # Degrees per density-map cell.
 POINT_CAP = 2000  # per-dataset cap on individually plotted samples

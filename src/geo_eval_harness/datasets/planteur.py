@@ -45,6 +45,33 @@ def to_db(backscatter: np.ndarray) -> np.ndarray:
     return 10 * np.log10(np.clip(backscatter, S1_LINEAR_FLOOR, None))
 
 
+def _write_split(upstream: Path, target: Path, split: str, ids: list[int]) -> None:
+    """Fill ``<split>_<name>.npy.tmp`` memory maps for *ids*, releasing them on return."""
+    outputs = {
+        sensor: np.lib.format.open_memmap(
+            target / f"{split}_{sensor}.npy.tmp", mode="w+", dtype=dtype, shape=(len(ids), *shape)
+        )
+        for sensor, (_, shape, dtype) in SENSOR_ARRAYS.items()
+    }
+    mask = np.lib.format.open_memmap(
+        target / f"{split}_mask.npy.tmp",
+        mode="w+",
+        dtype=np.uint8,
+        shape=(len(ids), PATCH_SIZE, PATCH_SIZE),
+    )
+    for index, patch_id in enumerate(ids):
+        for sensor, (prefix, shape, dtype) in SENSOR_ARRAYS.items():
+            array = np.load(upstream / f"DATA_{prefix}_MONTHLY" / f"{prefix}_{patch_id}.npy")
+            if array.shape != shape or array.dtype != dtype:
+                raise ValueError(
+                    f"PLANTEUR {prefix}_{patch_id}: unexpected {array.dtype} array {array.shape}."
+                )
+            outputs[sensor][index] = to_db(array) if sensor == "s1" else array
+        mask[index] = np.load(upstream / "ANNOTATIONS" / f"TARGET_{patch_id}.npy")[0]
+    for memmap in (*outputs.values(), mask):
+        memmap.flush()
+
+
 def convert_planteur(upstream: Path, target: Path, *, expected_sizes: dict[str, int]) -> None:
     """Stack the release's per-patch monthly arrays into one memory-mappable file per split.
 
@@ -71,36 +98,13 @@ def convert_planteur(upstream: Path, target: Path, *, expected_sizes: dict[str, 
             raise ValueError(
                 f"PLANTEUR {split}: expected {expected_sizes[split]} patches, got {len(ids)}."
             )
-        outputs = {
-            sensor: np.lib.format.open_memmap(
-                target / f"{split}_{sensor}.npy.tmp",
-                mode="w+",
-                dtype=dtype,
-                shape=(len(ids), *shape),
-            )
-            for sensor, (_, shape, dtype) in SENSOR_ARRAYS.items()
-        }
-        mask = np.lib.format.open_memmap(
-            target / f"{split}_mask.npy.tmp",
-            mode="w+",
-            dtype=np.uint8,
-            shape=(len(ids), PATCH_SIZE, PATCH_SIZE),
-        )
-        for index, patch_id in enumerate(ids):
-            for sensor, (prefix, shape, dtype) in SENSOR_ARRAYS.items():
-                array = np.load(upstream / f"DATA_{prefix}_MONTHLY" / f"{prefix}_{patch_id}.npy")
-                if array.shape != shape or array.dtype != dtype:
-                    raise ValueError(
-                        f"PLANTEUR {prefix}_{patch_id}: unexpected {array.dtype} array {array.shape}."
-                    )
-                outputs[sensor][index] = to_db(array) if sensor == "s1" else array
-            mask[index] = np.load(upstream / "ANNOTATIONS" / f"TARGET_{patch_id}.npy")[0]
-            island, lon, lat = centres[patch_id]
-            rows.append((patch_id, split, island, f"{lon:.6f}", f"{lat:.6f}"))
-        for array in (*outputs.values(), mask):
-            array.flush()
+        _write_split(upstream, target, split, ids)
+        # Rename only after _write_split returns: Windows cannot replace a memory-mapped file.
         for name in (*SENSOR_ARRAYS, "mask"):
             (target / f"{split}_{name}.npy.tmp").replace(target / f"{split}_{name}.npy")
+        for patch_id in ids:
+            island, lon, lat = centres[patch_id]
+            rows.append((patch_id, split, island, f"{lon:.6f}", f"{lat:.6f}"))
         logger.info("Converted PLANTEUR %s split (%d patches).", split, len(ids))
     with (target / "metadata.csv").open("w", newline="") as stream:
         writer = csv.writer(stream, lineterminator="\n")

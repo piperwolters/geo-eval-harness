@@ -9,9 +9,9 @@ from typing import Any
 import pytest
 import torch
 
-from torchgeo_bench.datasets.base import BandSpec
-from torchgeo_bench.models import UniverSatBenchModel
-from torchgeo_bench.models.universat import _build_sensor_groups, _sar_code
+from geo_eval_harness.datasets.base import BandSpec
+from geo_eval_harness.models import UniverSatBenchModel
+from geo_eval_harness.models.universat import _build_sensor_groups, _sar_code
 
 
 def _s2_band(name: str, wavelength_um: float) -> BandSpec:
@@ -101,7 +101,7 @@ def test_forward_routes_interleaved_sensors_and_pools_tokens(
     assert seen["load"] == (
         "fixture/model:pinned",
         "from_pretrained",
-        {"trust_repo": True, "compile": False},
+        {"trust_repo": True, "skip_validation": True, "compile": False},
     )
     assert not model.model.training
     expected = torch.tensor([[0.6, 0.8]]) if normalize else torch.tensor([[3.0, 4.0]])

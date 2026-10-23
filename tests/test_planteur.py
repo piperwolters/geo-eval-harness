@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 import torch
 
-from torchgeo_bench import download, hub
-from torchgeo_bench.datasets.planteur import PLANTEUR, PLANTEURLOIOMayotte, convert_planteur
+from geo_eval_harness import download, hub
+from geo_eval_harness.datasets.planteur import PLANTEUR, PLANTEURLOIOMayotte, convert_planteur
 
 SPLIT_IDS = {"train": [3, 0], "val": [1], "test": [2]}
 SIZES = {split: len(ids) for split, ids in SPLIT_IDS.items()}
@@ -140,7 +140,7 @@ def test_pickled_split_reopens_its_arrays(converted: Path) -> None:
 
 def test_missing_split_points_to_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(FileNotFoundError, match="torchgeo-bench download planteur"):
+    with pytest.raises(FileNotFoundError, match="geo-eval-harness download planteur"):
         PLANTEUR().get_dataset("train")
 
 
